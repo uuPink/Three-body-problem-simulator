@@ -842,7 +842,7 @@ if __name__ == "__main__":
 
     #sim.start_analysis(mode = 1, system=[0,], delta = 5e29, var="mass")
 
-    sim.save_lifespan_excel(1)
+    #sim.save_lifespan_excel(1)
     
     #sim.save_excel()
 

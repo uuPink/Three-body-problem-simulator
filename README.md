@@ -13,4 +13,6 @@ Acceleration- and velocitydata as well as lifespan data can be saved to excel-fi
 
 
 ---------------------------------------
-This program was made as a part of a larger school-project, and therefore I'm now too lazy to fix the things which only works in very specific scenarios and remove/improve comments. Some unused code is also still in the files but isn't activated. Some comments are also in swedish (sorry again)
+This program was made as a part of a larger school-project, and therefore I'm now too lazy to fix the things which only works in very specific scenarios and remove/improve comments. Some unused code is also still in the files but isn't activated. Some comments are also in swedish (sorry).
+
+Maybe will come back to this project later to improve it and give it a UI for easy-use but for now I don't have the time to work on this anymore.

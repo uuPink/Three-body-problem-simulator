@@ -1,3 +1,4 @@
+
 ----------------------
 **Three-body problem simulator**
 ----------------------
@@ -29,3 +30,7 @@ H5py 3.15.1
 Pandas 2.3.3
 Matplotlib 3.10.3
 Pandas xlsxwriter 3.2.9
+
+----------------------------------------
+Example:
+<img width="682" height="592" alt="2_39_47304000_1777223920 7912383" src="https://github.com/user-attachments/assets/2ee72b8f-7ff2-481c-b373-6a4915f5df2a" />

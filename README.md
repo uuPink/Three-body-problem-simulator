@@ -1,8 +1,9 @@
 ----------------------
+Three-body problem simulator
+
 Inspired by (and original simulation code retrieved from) https://github.com/jman4162/Three-Body-Problem-Simulator
 ----------------------
-
-This is a three-body problem simulator which runs simulations in bulk, saving the trajectories to a .h5-file and metadata to a .parquet-file. 
+This is a three-body problem simulator made in Python which runs simulations with SciPy in bulk, saving the trajectories to a .h5-file and metadata to a .parquet-file. 
 
 Simulations are mainly ran in bulk with a variation of intial-values to later analyse correlations between variable and system lifespan. 
 

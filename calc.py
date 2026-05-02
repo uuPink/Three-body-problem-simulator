@@ -1,9 +1,11 @@
 from time import time
 from scipy import integrate
 import numpy as np
+from math import sqrt
 
 #----------calc.py
 #Contains all calculation and animation modules (except for some which are in main.py)
+#One thing that you should know is that positions is both called steps and positions it depends on where you read it. This code is so chopped.
 
 class Body:
     def __init__(self, mass, startxyz: tuple, startvelxyz: tuple, radius, color, label):
@@ -227,15 +229,14 @@ class BodyManager:
         print("Collision calculation time: ", time()-t)
         return ([steps, self.dists])
     
-    def calculate_lifespan(self, trajectories, velocities, mass, t_start, t_end, steps, save_acc = False, save_vel = False, acc_tol = 1, t_lifetol = 0.9, analyse=True):
+    def calculate_lifespan1(self, trajectories, velocities, mass, t_start, t_end, steps, save_acc = False, save_vel = False, acc_tol = 0.5, t_lifetol = 0.9, analyse=True):
         """
+        First version. Accurate to a certain degree but does not scale with system so smaller systems might face problems. 
+
         Doesn't work with 3d.
 
-        save_acc and save_vel saves to a file, which now is kind of not needed but I haven't removed the feature yet. Also it only saves for body 1.
-        Also switches dots to commas since excel uses that for decimals.
-
         acc_tol for which acceleration a body must have to count as still active in the system.
-        t_lifetol for how close to the end of the simulation a body can turn unactive but still count as active because of uncertainty of what happens after the simulation ends.
+        t_lifetol - t_lifetol*tmax for how close to the end of the simulation a body can turn unactive but still count as active because of uncertainty of what happens after the simulation ends.
 
         analyse: if False, won't calculate lifespan (useful for example when savetoexcel wants the velocities but doesn't need lifespan)
         """
@@ -259,6 +260,9 @@ class BodyManager:
         ls1 = [0,0]
         ls2 = [0,0]
         ls3 = [0,0]
+
+        #Tolerance for what kind of acceleration means a body is still integrated in the system. 
+        acctol = acc_tol
 
         #For each step, calculate acceleration on each body and compare to the energy of the moving body.
         for step in range(0, steps):
@@ -293,16 +297,8 @@ class BodyManager:
             t_current = t_list[step]
             t_max = t_end-t_start
             
-            #Get 2D-arrays of velocities with x,y coordinate for current step
-            v1_ = np.array([v1[0][step],v1[1][step]])
-            v2_ = np.array([v2[0][step],v2[1][step]])
-            v3_ = np.array([v3[0][step],v3[1][step]])
-            
             if analyse:
-                #Tolerance for what kind of acceleration means a body is still integrated in the system. 
-                acctol = acc_tol
-                
-                #Basically how this works is that we're cehcking if the acceleration is greater than acctol to see if a body is still in the system. ls1 can be seen as a "time of death" counter as it 
+                #Basically how this works is that we're checking if the acceleration is greater than acctol to see if a body is still in the system. ls1 can be seen as a "time of death" counter as it 
                 #resets every time it's confirmed that the system is alive but as soon as it's not proved to be alive and doesn't already have a saved time of death will become the current time which then acts as the new time of death. 
                 if any(abs(a1) > acctol):
                     #Acceleration going away from 0: clear list as the system is not dead yet.
@@ -344,53 +340,399 @@ class BodyManager:
         calc_time = time()-t
         print("Calculation time:", calc_time)
         
-        if save_acc:
-            x_line = ""
-            ax = [f"{ax}\n" for ax in ac1x]
-            for line in ax:
-                x_line += line
-            
-            y_line = ""
-            ay = [f"{ay}\n" for ay in ac1y]
-            for line in ay:
-                y_line += line
+        return ac1x, ac2x, ac3x, ac1y, ac2y, ac3y, lifespan, calc_time
+    
+    def calculate_lifespan2(self, trajectories, velocities, mass, t_start, t_end, steps, save_acc = False, save_vel = False, acc_tol = 0.1, t_lifetol = 0.9, analyse=True):
+        """
+        Second version. Scales with system but does not work when bodies make both very big and very small acceleration jumps.
+        Doesn't work with 3d.
 
-            x_line = x_line.replace(".", ",")
-            y_line = y_line.replace(".", ",")
+        velocities unnecessary but haven't removed them from args yet.
 
-            filename = f"output_acceleration_{time()}.txt"
-            with open(filename, "w") as f:
-                f.write(f"X acceleration:\n{x_line}\n\nY acceleration:\n{y_line}")
-            
-            print(f"Acceleration saved to '{filename}'")
-            
-        if save_vel:
-            x_line = ""
-            vx = [f"{vx}\n" for vx, vy in v1]
-            for line in vx:
-                x_line += line
-            
-            y_line = ""
-            vy = [f"{vy}\n" for vx, vy in v1]
-            for line in vy:
-                y_line += line
-            
-            x_line = x_line.replace(".", ",")
-            y_line = y_line.replace(".", ",")
+        acc_tol - acc_tol*max difference between start acceleration and max acceleration determines how much acceleration change from start acceleration counts as a system which is alive. 
+            Indirectly also determines how much acceleration is needed for a body to not be alive. Bruh I officially hate acc_tol why is this so hard. 
+            The higher your acc_tol is, the harder it will be for a jump in acceleration to count as a revival of the system. 
+            Therefore 0.5 is too high and 0.1 is preferred since a very large jump in the begining can make later jumps not register at all.
+        t_lifetol - t_lifetol*tmax for how close to the end of the simulation a body can turn unactive but still count as active because of uncertainty of what happens after the simulation ends.
 
-            filename = f"output_velocity_{time()}.txt"
-            with open(filename, "w") as f:
-                f.write(f"X velocity:\n{x_line}\n\nY velocity:\n{y_line}")
+        analyse: if False, won't calculate lifespan (useful for example when savetoexcel wants the accelerations but doesn't need lifespan)
+        """
+
+        G = 6.67430e-11
+        m1, m2, m3 = mass[0], mass[1], mass[2]
+
+        ac1x, ac1y, ac2x, ac2y, ac3x, ac3y = [], [], [], [], [], []
+        v1, v2, v3 = velocities[0], velocities[1], velocities[2]
+
+        steps = int(steps)
+
+        lifespan = 0
+
+        t = time()
+
+        #Times at which a solution was saved
+        t_list = np.linspace(t_start, t_end, steps)
+
+        #For each step, calculate acceleration on each body and compare to the energy of the moving body.
+        for step in range(0, steps):
+            x1, y1, x2, y2, x3, y3 = trajectories[0][step], trajectories[1][step], trajectories[2][step], trajectories[3][step], trajectories[4][step], trajectories[5][step]
+
+            pos1 = np.array([x1, y1])
+            pos2 = np.array([x2, y2])
+            pos3 = np.array([x3, y3])
+
+            pos12 = pos1-pos2
+            pos13 = pos1-pos3
+            pos23 = pos2-pos3
+            dist12 = np.linalg.norm(pos12)
+            dist13 = np.linalg.norm(pos13)
+            dist23 = np.linalg.norm(pos23)
+
+            #Formula for acceleration on body when two gravitational forces affect a body
+            #a1 for force excerted on body 1 from body 2 and 3, and so on...
+            a1 = -G * m2 * pos12 / dist12**3 - G * m3 * pos13 / dist13**3
+            a2 = -G * m1 * (-pos12) / dist12**3 - G * m3 * pos23 / dist23**3
+            a3 = -G * m1 * (-pos13) / dist13**3 - G * m2 * (-pos23) / dist23**3
+
+            #Adding to list for graphing purposes
+            ac1x.append(a1[0])
+            ac2x.append(a2[0])
+            ac3x.append(a3[0])
+            ac1y.append(a1[1])
+            ac2y.append(a2[1])
+            ac3y.append(a3[1])
+
+
+        if analyse:
+            ls1 = [0,0]
+            ls2 = [0,0]
+            ls3 = [0,0]
+
+            #Turning all accelerations into absolute values
+            abs_acc = []
+            for acc in ac1x, ac1y, ac2x, ac2y, ac3x, ac3y:
+                abs_acc.append([abs(ac) for ac in acc])
             
-            print(f"Velocity saved to '{filename}'")
+            #Setting the tolerances for each body for what kind of acceleration means they are still integrated in the system.
+            tols = []
+            for acc in abs_acc:
+                start = acc[0]
+                maxtol = max(acc)
+
+                #Security for if max(acc) is some wild number. If maxtol is bigger than two times the second largest maxtol then the second largest maxtol is used since the largest one is unrealistic.
+                new_list = acc.copy()
+                new_list.remove(maxtol)
+                second_maxtol = max(new_list)
+                if maxtol>2*second_maxtol:
+                    maxtol = second_maxtol
+
+                tol = acc_tol*max(maxtol-start, start-maxtol)
+                tols.append(tol)
+            print(tols)
+            #---Calculating lifespan
+            t_max = t_end-t_start
+            
+            starts = [acc[0] for acc in abs_acc]
+            for step in range(0, steps):
+                t_current = t_list[step]
+
+                #Basically how this works is that w're checking if the difference in acceleration of a step is bigger than acc_tol*the largest difference in acceleration found in the data compared to the start.
+                #If True, the body is still in the system as it still interacting with the other bodies. ls1 can be seen as a "time of death" counter as it resets every time it's confirmed that the
+                #system is alive but as soon as it's not proved to be alive and doesnn't have a saed time of death will become the current time which then becomes the time of death.
+                if abs_acc[0][step]-starts[0]>tols[0] or abs_acc[1][step]-starts[1]>tols[1]:
+                    #Acceleration going away from 0: clear list as the system is not dead yet.
+                    ls1 = [0,0]
+                else:
+                    if ls1 == [0,0]:
+                        #If acceleration around 0: add time to list as we want to keep track of the lifespan. 
+                        ls1 = [t_current, step+1]
+                
+                if abs_acc[2][step]-starts[2]>tols[2] or abs_acc[3][step]-starts[3]>tols[3]:
+                    ls2 = [0,0]
+                else:
+                    if ls2 == [0,0]:
+                        ls2 = [t_current, step+1]
+                
+                if abs_acc[4][step]-starts[4]>tols[4] or abs_acc[5][step]-starts[5]>tols[5]:
+                    ls3 = [0,0]
+                else:
+                    if ls3 == [0,0]:
+                        ls3 = [t_current, step+1]
+            print(ls1, ls2, ls3)
+            #Convert [0,0] to [t_max,steps] since those with [0,0] has not affected the lifespan
+            if ls1 == [0,0]: ls1 = [t_max, steps]
+            if ls2 == [0,0]: ls2 = [t_max, steps]
+            if ls3 == [0,0]: ls3 = [t_max, steps]
+
+            #Tolerance of how late in the simulation a system can act dead but still be considered alive since we might not be able to tell what happens after the simulation ends.
+            #Basically: if time of death is later than the step at which we can't predict the future too well, assume death did not occur.
+            tlifetol = t_lifetol*t_max
+
+            if ls1[0]-t_start>tlifetol and ls2[0]-t_start>tlifetol and ls3[0]-t_start>tlifetol:
+                lifespan = [t_max, steps]
+            else:
+                #Choose earliest time of death and set actual lifespan by subtracting starting time. 
+                lifespan = [min(ls1[0], ls2[0], ls3[0])-t_start,min(ls1[1], ls2[1], ls3[1])]
+
+            print("Lifespan:", lifespan[0], "seconds at step:", lifespan[1])
+        calc_time = time()-t
+        print("Calculation time:", calc_time)
         
         return ac1x, ac2x, ac3x, ac1y, ac2y, ac3y, lifespan, calc_time
 
+    def calculate_lifespan3(self, trajectories, velocities, mass, t_start, t_end, steps, save_acc = False, save_vel = False, acc_tol = 100, t_lifetol = 0.9, analyse=True):
+        """
+        Third version. Works good as long as acceleration jumps are bigger than acc_tol times the start acceleration. Might work bad if acceleration-norm changes after half of the simulation.
+        Yeah now it works bad since different parts of the same simulation want different acc_tol and you can't determine acc_tol based on accelerations since accelerations can include many different maximas 
+        which can lead to an acc_tol which doesn't recognize the lowest or highest maximas. 
+        Doesn't work with 3d.
 
+        acc_tol - acc_tol*start acceleration determines what acceleration counts as unusual. Default value 5.
+        t_lifetol - t_lifetol*tmax for how close to the end of the simulation a body can turn unactive but still count as active because of uncertainty of what happens after the simulation ends.
 
+        analyse: if False, won't calculate lifespan (useful for example when savetoexcel wants the velocities but doesn't need lifespan)
+        """
+
+        G = 6.67430e-11
+        m1, m2, m3 = mass[0], mass[1], mass[2]
+
+        ac1x, ac1y, ac2x, ac2y, ac3x, ac3y = [], [], [], [], [], []
+        v1, v2, v3 = velocities[0], velocities[1], velocities[2]
+
+        steps = int(steps)
+
+        t = time()
+
+        #Times at which a solution was saved
+        t_list = np.linspace(t_start, t_end, steps)
+        t_max = t_end-t_start
+
+        lifespan = 0
+
+        ls1 = [0,0]
+        ls2 = [0,0]
+        ls3 = [0,0]
+
+        #For each step, calculate acceleration on each body and compare to the energy of the moving body.
+        for step in range(0, steps):
+            x1, y1, x2, y2, x3, y3 = trajectories[0][step], trajectories[1][step], trajectories[2][step], trajectories[3][step], trajectories[4][step], trajectories[5][step]
+
+            pos1 = np.array([x1, y1])
+            pos2 = np.array([x2, y2])
+            pos3 = np.array([x3, y3])
+
+            pos12 = pos1-pos2
+            pos13 = pos1-pos3
+            pos23 = pos2-pos3
+            dist12 = np.linalg.norm(pos12)
+            dist13 = np.linalg.norm(pos13)
+            dist23 = np.linalg.norm(pos23)
+
+            #Formula for acceleration on body when two gravitational forces affect a body
+            #a1 for force excerted on body 1 from body 2 and 3, and so on...
+            a1 = -G * m2 * pos12 / dist12**3 - G * m3 * pos13 / dist13**3
+            a2 = -G * m1 * (-pos12) / dist12**3 - G * m3 * pos23 / dist23**3
+            a3 = -G * m1 * (-pos13) / dist13**3 - G * m2 * (-pos23) / dist23**3
+
+            #Adding to list for graphing purposes
+            ac1x.append(a1[0])
+            ac2x.append(a2[0])
+            ac3x.append(a3[0])
+            ac1y.append(a1[1])
+            ac2y.append(a2[1])
+            ac3y.append(a3[1])
+
+        if analyse:
+            #Turning all accelerations into absolute values
+            abs_acc = []
+            for acc in ac1x, ac1y, ac2x, ac2y, ac3x, ac3y:
+                abs_acc.append([abs(ac) for ac in acc])
+            
+            starts = [acc[0] for acc in abs_acc]
+            #print(starts)
+
+            tols = []
+            for start in starts:
+                tols.append(start*acc_tol)
+
+            for step in range(0, steps):
+                #---Calculating lifespan
+                t_current = t_list[step]
+                
+                #Basically how this works is that we're checking if the acceleration is greater than acc_tol*start acceleration for each body's accelerations to see if a body is still in the system. ls1 can be seen as a "time of death" counter as it 
+                #resets every time it's confirmed that the system is alive but as soon as it's not proved to be alive and doesn't already have a saved time of death will become the current time which then acts as the new time of death. 
+                if abs_acc[0][step]>tols[0] or abs_acc[1][step]>tols[1]:
+                    #Acceleration going away from 0: clear list as the system is not dead yet.
+                    ls1 = [0,0]
+                else:
+                    if ls1 == [0,0]:
+                        #If acceleration around 0: add time to list as we want to keep track of the lifespan. 
+                        ls1 = [t_current, step+1]
+                
+                print(tols[2], tols[3])
+                if abs_acc[2][step]>tols[2] or abs_acc[3][step]>tols[3]:
+                    ls2 = [0,0]
+                else:
+                    if ls2 == [0,0]:
+                        ls2 = [t_current, step+1]
+                
+                if abs_acc[4][step]>tols[4] or abs_acc[5][step]>tols[5]:
+                    ls3 = [0,0]
+                else:
+                    if ls3 == [0,0]:
+                        ls3 = [t_current, step+1]
+            print(ls1, ls2, ls3)
+            #Convert [0,0] to [t_max,steps] since those with [0,0] has not affected the lifespan
+            if ls1 == [0,0]: ls1 = [t_max, steps]
+            if ls2 == [0,0]: ls2 = [t_max, steps]
+            if ls3 == [0,0]: ls3 = [t_max, steps]
+
+            #Tolerance of how late in the simulation a system can act dead but still be considered alive since we might not be able to tell what happens after the simulation ends.
+            #Basically: if time of death is later than the step at which we can't predict the future too well, assume death did not occur.
+            tlifetol = t_lifetol*t_max
+
+            if ls1[0]-t_start>tlifetol and ls2[0]-t_start>tlifetol and ls3[0]-t_start>tlifetol:
+                lifespan = [t_max, steps]
+            else:
+                #Choose earliest time of death and set actual time of death by subtracting starting time. 
+                lifespan = [min(ls1[0], ls2[0], ls3[0])-t_start,min(ls1[1], ls2[1], ls3[1])]
+
+            print("Lifespan:", lifespan[0], "seconds at step:", lifespan[1])
+        calc_time = time()-t
+        print("Calculation time:", calc_time)
+        
+        return ac1x, ac2x, ac3x, ac1y, ac2y, ac3y, lifespan, calc_time
+    
+    def calculate_lifespan(self, trajectories, velocities, mass, t_start, t_end, steps, save_acc = False, save_vel = False, t_lifetol = 0.9, analyse=True):
+        """
+        Fourth version. Solution: remove acc_tol altogether. Instead compare last and next values to see if they are greater respectively higher than current acceleration to 
+        find maximas in the absolute values of the accelerations. Found a new maxima? Nice, that's our new time of death!
+        One problem is that the simulation naturally has small errors which make some random accelerations be larger than the step before and after, so to make sure we get "real" maximas we 
+        require that at least one of the jumps is larger than the starting acceleration.
+
+        t_lifetol - t_lifetol*tmax for how close to the end of the simulation a body can turn unactive but still count as active because of uncertainty of what happens after the simulation ends.
+
+        analyse: if False, won't calculate lifespan (useful for example when savetoexcel wants the velocities but doesn't need lifespan)
+        """
+
+        G = 6.67430e-11
+        m1, m2, m3 = mass[0], mass[1], mass[2]
+
+        ac1x, ac1y, ac2x, ac2y, ac3x, ac3y = [], [], [], [], [], []
+        v1, v2, v3 = velocities[0], velocities[1], velocities[2]
+
+        steps = int(steps)
+
+        t = time()
+
+        #Times at which a solution was saved
+        t_list = np.linspace(t_start, t_end, steps)
+        t_max = t_end-t_start
+
+        lifespan = 0
+
+        ls1 = [0,0]
+        ls2 = [0,0]
+        ls3 = [0,0]
+
+        #For each step, calculate acceleration on each body and compare to the energy of the moving body.
+        for step in range(0, steps):
+            x1, y1, x2, y2, x3, y3 = trajectories[0][step], trajectories[1][step], trajectories[2][step], trajectories[3][step], trajectories[4][step], trajectories[5][step]
+
+            pos1 = np.array([x1, y1])
+            pos2 = np.array([x2, y2])
+            pos3 = np.array([x3, y3])
+
+            pos12 = pos1-pos2
+            pos13 = pos1-pos3
+            pos23 = pos2-pos3
+            dist12 = np.linalg.norm(pos12)
+            dist13 = np.linalg.norm(pos13)
+            dist23 = np.linalg.norm(pos23)
+
+            #Formula for acceleration on body when two gravitational forces affect a body
+            #a1 for force excerted on body 1 from body 2 and 3, and so on...
+            a1 = -G * m2 * pos12 / dist12**3 - G * m3 * pos13 / dist13**3
+            a2 = -G * m1 * (-pos12) / dist12**3 - G * m3 * pos23 / dist23**3
+            a3 = -G * m1 * (-pos13) / dist13**3 - G * m2 * (-pos23) / dist23**3
+
+            #Adding to list for graphing purposes
+            ac1x.append(a1[0])
+            ac2x.append(a2[0])
+            ac3x.append(a3[0])
+            ac1y.append(a1[1])
+            ac2y.append(a2[1])
+            ac3y.append(a3[1])
+
+        if analyse:
+            #Turning all accelerations into absolute values
+            abs_acc = []
+            for acc in ac1x, ac1y, ac2x, ac2y, ac3x, ac3y:
+                abs_acc.append([abs(ac) for ac in acc])
+
+            #Starts are used to see if the jump is big enough for the maxima to be called a maxima or if it's just a random small change in acceleration which happens to be higher than the one before and after.
+            starts = [acc[0] for acc in abs_acc]
+
+            #---Calculating lifespan
+            for step in range(0, steps):
+                t_current = t_list[step]
+                #Since the system works by looking for AFTER a maximum has occured the lifespan will show one step after the actual occurance of the maximum. That step is then concidered to be the time of death
+                
+                #Basically how this works is that we're checking if the acceleration is lower the step before and higher the step after for each body's accelerations to see if a body is still in the system. 
+                #ls1 can be seen as a "time of death" counter as it resets every time it's confirmed that the system is alive but as soon as it's not proved to be alive and doesn't already have a saved time of death will become the current time which then acts as the new time of death. 
+                #First and last step is excluded as they do not have both a step before and step after
+                if step != 0 and step != steps-1:
+                    if (abs_acc[0][step] > abs_acc[0][step+1] and abs_acc[0][step] > abs_acc[0][step-1] and (abs_acc[0][step]-abs_acc[0][step+1] > starts[0] or abs_acc[0][step]-abs_acc[0][step-1] > starts[0])) or (abs_acc[1][step] > abs_acc[1][step+1] and abs_acc[1][step] > abs_acc[1][step-1] and (abs_acc[1][step]-abs_acc[1][step+1] > starts[1] or abs_acc[1][step]-abs_acc[1][step-1] > starts[1])):
+                        #Acceleration at a maximum where one of the jumps are big enough to be a "real" maximum: clear list as the system is not dead yet.
+                        ls1 = [0,0]
+                        #print(step+1, abs_acc[0][step-1], abs_acc[0][step], abs_acc[0][step+1], abs_acc[1][step-1], abs_acc[1][step], abs_acc[1][step+1])
+                    else:
+                        if ls1 == [0,0]:
+                            #If acceleration around 0: add time to list as we want to keep track of the lifespan. 
+                            ls1 = [t_current, step+1]
+                    
+                    if (abs_acc[2][step] > abs_acc[2][step+1] and abs_acc[2][step] > abs_acc[2][step-1] and (abs_acc[2][step]-abs_acc[2][step+1] > starts[2] or abs_acc[2][step]-abs_acc[2][step-1] > starts[2])) or (abs_acc[3][step] > abs_acc[3][step+1] and abs_acc[3][step] > abs_acc[3][step-1] and (abs_acc[3][step]-abs_acc[3][step+1] > starts[3] or abs_acc[3][step]-abs_acc[3][step-1] > starts[3])):
+                        ls2 = [0,0]
+                    else:
+                        if ls2 == [0,0]:
+                            ls2 = [t_current, step+1]
+                    
+                    if (abs_acc[4][step] > abs_acc[4][step+1] and abs_acc[4][step] > abs_acc[4][step-1] and (abs_acc[4][step]-abs_acc[4][step+1] > starts[4] or abs_acc[4][step]-abs_acc[4][step-1] > starts[4])) or (abs_acc[5][step] > abs_acc[5][step+1] and abs_acc[5][step] > abs_acc[5][step-1] and (abs_acc[5][step]-abs_acc[5][step+1] > starts[5] or abs_acc[5][step]-abs_acc[5][step-1] > starts[5])):
+                        ls3 = [0,0]
+                    else:
+                        if ls3 == [0,0]:
+                            ls3 = [t_current, step+1]
+            
+            #print(ls1, ls2, ls3)
+            #Convert [0,0] to [t_max,steps] since those with [0,0] has not affected the lifespan
+            if ls1 == [0,0]: ls1 = [t_max, steps]
+            if ls2 == [0,0]: ls2 = [t_max, steps]
+            if ls3 == [0,0]: ls3 = [t_max, steps]
+
+            #Tolerance of how late in the simulation a system can act dead but still be considered alive since we might not be able to tell what happens after the simulation ends.
+            #Basically: if time of death is later than the step at which we can't predict the future too well, assume death did not occur.
+            tlifetol = t_lifetol*t_max
+
+            if ls1[0]-t_start>tlifetol and ls2[0]-t_start>tlifetol and ls3[0]-t_start>tlifetol:
+                lifespan = [t_max, steps]
+            else:
+                #Choose earliest time of death and set actual time of death by subtracting starting time. 
+                lifespan = [min(ls1[0], ls2[0], ls3[0])-t_start,min(ls1[1], ls2[1], ls3[1])]
+
+            print("Lifespan:", lifespan[0], "seconds at step:", lifespan[1])
+        calc_time = time()-t
+        print("Calculation time:", calc_time)
+        
+        return ac1x, ac2x, ac3x, ac1y, ac2y, ac3y, lifespan, calc_time
 
     def reset(self, bodies):
-        self.bodies = bodies 
+        self.bodies = bodies
+
+        #Make sure pos and vel are restarted
+        for body in self.bodies:
+            body.pos = body.startpos
+            body.vel = body.startvel
+
         self.trajectories = []
         self.frames = []
         self.dists = []

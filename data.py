@@ -10,7 +10,11 @@ from time import time
 #   Parquet läses m.h.a. pandas medan hdf5 har en egen modul h5.
 
 class DataManager:
-    def __init__(self, hdf5file = "sim_data.h5", parquetfile="sim_metadata.parquet", reset = False, storage_limit = 10, backup_freq = 1000):
+    def __init__(self, hdf5file = "C:/Users/willi/Documents/h5/sim_data.h5", parquetfile="C:/Users/willi/Documents/h5/sim_metadata.parquet", reset = False, storage_limit = 10, backup_freq = 1000, last_sim_override = -10):
+        """
+        Only use last_sim_override if you want to set the last sim ID to something specific. Remember that datamgr always saves a sim as last_sim_id+1.
+        """
+        
         self.HDF5 = hdf5file
         self.PARQUET = parquetfile
 
@@ -36,17 +40,20 @@ class DataManager:
                 df = pd.read_parquet(self.PARQUET, columns=["sim_id"])
                 self.last_sim_id = df["sim_id"].iloc[-1]
                 try:
-                    self.last_track = df["sim_track"].iloc[-1]
+                    df = pd.read_parquet(self.PARQUET, columns=["sim_track"])
+                    self.last_track = int(df["sim_track"].iloc[-1])
                 except:
                     self.last_track = "Null"
-            
+        
+        if last_sim_override != -10:
+            self.last_sim_id = last_sim_override
 
     def saveSim(self, mode, simtrack, simstart, simend, lifespan, args: tuple, savemode = 0):
         #Simtrack: identifier for which starting system was used for the continued tree of simulations.
         #Lifespan: calculated lifespan of system
         #args: set up by bodymgr. (trajectories, velocities, steps, [...])
 
-        #Mode determines if z coordinate, position and start velocity should be included in saved data or not.
+        #Mode determines if z coordinate, position and start velocity should be included in saved data or not. Mode = 2 is default (2 as in 2d)
         #velocities always come as 2d-data but still needs flattening.
         t = time()
         self.last_sim_id+=1
@@ -116,11 +123,13 @@ class DataManager:
             self.backupSim()
             self.sims_ran_since_backup = 0
     
-    def backupSim(self):
-        shutil.copy2(self.HDF5, f'{self.HDF5}_backup_{time()}.h5')
-        print("Backup generated for HDF5")
-        shutil.copy2(self.PARQUET, f'{self.PARQUET}_backup_{time()}.parquet')
-        print("Backup generated for parquet")
+    def backupSim(self, hdf5=True, parquet=True):
+        if hdf5:
+            shutil.copy2(self.HDF5, f'{self.HDF5}_backup_{time()}.h5')
+            print("Backup generated for HDF5")
+        if parquet:
+            shutil.copy2(self.PARQUET, f'{self.PARQUET}_backup_{time()}.parquet')
+            print("Backup generated for parquet")
 
     def reset(self):
         print("Creating new files...")
@@ -146,7 +155,7 @@ class DataManager:
         df = pd.DataFrame(columns=["sim_id"])
         df.to_parquet(self.PARQUET)
     
-    def get_analyze_data(self, sim_id: list | str = 0, gettrajectorydata = True, getvelocitydata = True, getmetadata = True, metadata: list | str = "all", sim_track: int = -10):
+    def get_analyze_data(self, sim_id: list | str = 0, gettrajectorydata = True, getvelocitydata = True, getmetadata = True, metadata: list | str = "all", sim_track: int = -10, orderMode = False):
         """
         Docstring for get_analyze_data
         
@@ -154,27 +163,42 @@ class DataManager:
         :type sim_id: list | str
         :param metadata: columns from which to collect metadata. Default "all", example ("start_velocity",). "sim_id" included at default.
         :type metadata: list | str
-        :param sim_track: sim_track to retrieve all data from. Enable by putting sim_id != -10. Currently only supports retrieving metadata (probably easy to implement trajectories though).
+        :param sim_track: sim_track to retrieve all data from. Enable by putting sim_id != -10. Supports both metadata and trajectories but 50/50 on if it works to get just the trajectories and not the metadata.
         :type sim_track: int
 
-        Metadata and sim_id has to be put in arrays. If not parquet won't read correctly.
+        Metadata and sim_id has to be put in arrays (except for when using "all"). If not parquet won't read correctly. (okay might not be true for sim_id since this function automatically turns single integer into array)
+        If sim_track is used you should always include "lifespan" in the metadata to be retrieved as well as the variable you want to look at.    
         """
         #if sim_id[-1]>self.last_sim_id or sim_id[-1]==0: return "Error", "sim_id not in saved data"
 
         #return_data = [[trajectory, velocity], metadata]
 
         if sim_track != -10:
-            return_data = readParquet(self.PARQUET, sim_track=sim_track, columns=["lifespan"] + metadata)
+            if sim_track == 0: 
+                sim_track = self.get_last_sim_track(); 
+            if sim_track == "Null": 
+                print("No sim_track found.")
+                return
+
+            return_data = []
+            if getmetadata:
+                return_data.append(readParquet(self.PARQUET, sim_track=sim_track, columns=metadata))
+
+            if gettrajectorydata and getmetadata:
+                return_data.append(readHDF5(self.HDF5, sim_id=return_data[0]["sim_id"], sim_track=sim_track, hasSimIDs=True, orderMode=orderMode))
+
+            elif gettrajectorydata and not getmetadata:
+                return_data.append(readHDF5(self.HDF5, sim_track=sim_track, hasSimIDs=False))
             return return_data
 
         if not sim_id or sim_id == 0: sim_id = [int(self.get_last_sim_id()),]
 
-        if type(sim_id) != list and sim_id != 0: sim_id=[sim_id,]
+        if type(sim_id) != list and sim_id != 0 and sim_id != "all": sim_id=[sim_id,]
 
         t = time()
         return_data = []
         if gettrajectorydata and not getvelocitydata: return_data.append(readHDF5(self.HDF5, mode = 0, sim_id=sim_id));
-        elif gettrajectorydata and getvelocitydata: return_data.append(readHDF5(self.HDF5, mode = 2, sim_id=sim_id));
+        elif gettrajectorydata and getvelocitydata: return_data.append(readHDF5(self.HDF5, mode = 2, sim_id=sim_id, orderMode=orderMode));
         elif getvelocitydata and not gettrajectorydata: return_data.append(readHDF5(self.HDF5, mode = 1, sim_id=sim_id));
 
         if getmetadata: return_data.append(readParquet(self.PARQUET, sim_id=sim_id, columns = metadata))
@@ -197,6 +221,97 @@ class DataManager:
         print("Sims", [int(sim[0]) for sim in self.sim_storage], "saved in", save_time, "seconds")
 
         self.sim_storage = []
+    
+    def bulksavemetadata(self, datadicts):
+        #Used for when you want to save metadata to parquet file in bulk from elsewhere than from within datamanager.
+
+        bulksaveToParquet(filename=self.PARQUET, datadicts=datadicts)
+    
+    def deleteData(self, ids = []):
+        """
+        Use with caution. Because of hdf5 sorting data can get flipped around when using this method, so always check that the data you get is the data you once had by comparing the latetst backup files and the new ones. 
+        
+        Removes all data related to sim IDs that can be found in array ids.
+        Backups data before writing to new files.
+
+        Does not change sim_ids and because of how saveBulk methods work this will only work with deleting most recent data so the remaining data stays intact orderly.
+        """
+
+        #Metadata structure and order:
+        #metadata = {
+        #    "sim_id": self.last_sim_id,
+        #    "sim_track": simtrack,
+        #    "sim_start": simstart,
+        #    "sim_end": simend,
+        #    "lifespan": lifespan,
+        #    "steps": args[2],
+        #    "start_position": start_pos,
+        #    "start_velocity": start_vel,
+        #    "mass": args[5],
+        #    "radius": args[6],
+        #    "color": args[7],
+        #    "label": args[8],
+        #}
+
+        olddata = self.get_analyze_data(sim_id = "all", metadata="all", orderMode=True)
+
+        #Trajectorydata is treated as a dictionary, so to find sim_id 100 you just get key 100
+        oldtrajectorydata = olddata[0]
+        #Metadata is always treated as a dictionary of columns, so to find the mass of sim_id 100 you use the key "mass" and then the index 99.
+        oldmetadata = olddata[1]
+
+        self.backupSim(hdf5 = True, parquet = True)
+        self.reset()
+
+
+        newtrajectorydata = {}
+        newdataDicts = []
+        print(f"Old data length: {len(oldmetadata['sim_id'])}")
+        for i, sim_id in enumerate(oldmetadata["sim_id"]):
+            #Skip adding to newmetadata and newtrajectorydata if sim_id should be deleted.
+            if sim_id in ids: continue
+
+            newmetadata = {
+                "sim_id": [],
+                "sim_track": [],
+                "sim_start": [],
+                "sim_end": [],
+                "lifespan": [],
+                "steps": [],
+                "start_position": [],
+                "start_velocity": [],
+                "mass": [],
+                "radius": [],
+                "color": [],
+                "label": [],
+            }
+
+            #Create dict from parquet column-data.
+            for key in newmetadata.keys():
+                newmetadata[key] = oldmetadata[key][i]
+
+            #Add dict to dataDicts.
+            newdataDicts.append(newmetadata)
+
+            #Add old trajectorydata to newtrajectorydata
+            newtrajectorydata[sim_id] = oldtrajectorydata[sim_id]
+        
+        print(f"New data length: {len(newdataDicts)}")
+
+        #Hdf5 takes data as [[traj1, vels1], [traj2, vels2], ..., [traj310, vels310]]
+        datalists = [[trajdata[:6],trajdata[6:]] for trajdata in newtrajectorydata.values()]
+
+        bulksaveToHDF5(self.HDF5, datalists=datalists, sim_ids=[dataDict["sim_id"] for dataDict in newdataDicts])
+
+        #Parquet takes data as [metadataDict1, metadataDict2, metadataDict3, ..., metadataDict310]
+        bulksaveToParquet(self.PARQUET, datadicts=newdataDicts)
+
+        
+
+
+
+
+    
 
 #------------ Save to HDF5
 def saveToHDF5(filename, datalists, sim_id: int):
@@ -226,14 +341,18 @@ def saveToParquet(filename, datadict):
     dataframe.to_parquet(filename, compression="zstd", index=False)
 
 #------------ Bulk-save to HDF5
-def bulksaveToHDF5(filename, datalists, sim_ids):
+def bulksaveToHDF5(filename, datalists, sim_ids, from_delete = False):
     with h5py.File(filename, "a") as f:
         for i, sim_id in enumerate(sim_ids):
             if sim_id < 10:
                 sim_id = "0" + str(sim_id)
             else: sim_id = str(sim_id)
-
-            datalist = datalists[i][0] + datalists[i][1]
+            
+            #Some datalists are as ndarrays, and those must be put together with np.concatenate.
+            if type(datalists[i][0]) == list:
+                datalist = datalists[i][0] + datalists[i][1]
+            elif type(datalists[i][0]) == np.ndarray:
+                datalist = np.concatenate((datalists[i][0], datalists[i][1]), axis=0)
 
             f["simulations"].create_dataset(sim_id, data=datalist, compression="gzip")
 
@@ -254,7 +373,7 @@ def bulksaveToParquet(filename, datadicts):
     dataframe.to_parquet(filename, compression="zstd", index=False)
 
 #------------ Read HDF5
-def readHDF5(filename, mode = 2, sim_id: list | str = "all"):
+def readHDF5(filename, mode = 2, sim_id: list | str = "all", sim_track=-10, hasSimIDs = True, orderMode = False):
     """
     Docstring for readHDF5
     
@@ -262,6 +381,12 @@ def readHDF5(filename, mode = 2, sim_id: list | str = "all"):
     :param mode: mode 0 - get trajectory. mode 1 - get velocity. mode 2 - get both trajectory and velocity data (default).
     :param sim_id: sim_id in a list. Always a list (except when sim_id is "all"). Default "all" => collecting from all sim_id's.
     :type sim_id: list | str
+    :param sim_track: default -10, meaning disabled. Any value >0 => data retrieved sim_ids on track instead of from sim_ids.
+    :type sim_track: int
+    :param hasSimIDs: default True, meaning sim IDs has been retrieved and therefore shall not be retrieved in this method. Only disable if gathering data from sim track and not using parquet along with it.
+    :type hasSimIDs: bool
+    :param orderMode: default False, which means trajectories are retrieved normally with no thought to the order of the trajectories. If True will turn sim_id to integers and sort them along with the trajectories in a dictionary so data is sorted correctly. Only works when retrieving ALL data from h5 as of now.
+    :type orderMode: bool
     """
 
     #Since this method doesn't return sim_id with every trajectory, there is no need to correct 01 to 1 and so on after data retrieval.
@@ -270,12 +395,28 @@ def readHDF5(filename, mode = 2, sim_id: list | str = "all"):
     # [[x11, x12,...], [y11, y12,...], [x21, x22,...], [y21, y22,...], [x31, x32,...], [y31, y32,...], [vel1x1, vel1x2, ...], [vel1y1, vel1y2, ...], [vel2x1, vel2x2, ...], [vel2y1, vel2y2, ...], [vel3x1, vel3x2, ...], [vel3y1, vel3y2, ...]], 
     # [[x11, x12,...], [y11, y12,...], [x21, x22,...], [y21, y22,...], [x31, x32,...], [y31, y32,...], [vel1x1, vel1x2, ...], [vel1y1, vel1y2, ...], [vel2x1, vel2x2, ...], [vel2y1, vel2y2, ...], [vel3x1, vel3x2, ...], [vel3y1, vel3y2, ...]],
     #]
+    
+    if sim_track!=-10:
+        #If sim_id is "all" when using sim_track mode, it means parquet data has not been retrieved and therefore parquet file should be opened to read sim_ids. 
+        # If sim_id != "all" it means the parquet file has already loaded sim_ids from sim_track and therefore the sim_ids will already be put in this function and can work like a normal retrieval of .h5 data.
+        if not hasSimIDs:
+            sim_id = readParquet(filename, sim_track=sim_track, columns=[])["sim_id"]
+
+        new_sim_id = []
+        for sim in sim_id:
+            new_sim_id.append(sim)
+        
+        sim_id = new_sim_id
 
     return_data = []
 
     with h5py.File(filename, "r") as f:
         if sim_id == "all":
-            return_data = [data[()] for data in [f[f"simulations/{sim}"] for sim in f["simulations"]]]
+            if not orderMode:
+                return_data = [data[()] for data in [f[f"simulations/{sim}"] for sim in f["simulations"]]]
+            else:
+                #This is how it should have been done from the beginning, since this is how we keep track of which sim is actually which sim. 
+                return_data = {int(sim):data[()] for (data, sim) in [(f[f"simulations/{sim}"], sim) for sim in f["simulations"]]}
         else:
             #If sim_id includes numbers 1-9 add 0 before it to match how it's written in h5 file
             sim_id = ["0"+str(_id) if _id<10 else _id for _id in sim_id]
@@ -301,7 +442,7 @@ def readHDF5(filename, mode = 2, sim_id: list | str = "all"):
 #------------ Analyze Parquet
 def readParquet(filename, sim_id: list | str = "all", columns: list | str = "all", sim_track = -10):
     """
-    Docstring for readHDF5
+    Docstring for readParquet
     
     :param filename: filename
     :param sim_id: sim_id in a list. Always a list. Default "all" => collecting from all sim_id's.
@@ -340,6 +481,7 @@ def readParquet(filename, sim_id: list | str = "all", columns: list | str = "all
             #Akta dig för sql-inject haha
             return data[columns].query(f"sim_id in {sim_id}")
 
+
 #------------ Transform dictionary of all data to a dictionary which can be turned into a dataframe (has two levels at max)
 def dataToExcelData(dataDict, accelerations):
     velocities = dataDict["velocity"]
@@ -356,16 +498,16 @@ def dataToExcelData(dataDict, accelerations):
     dataDict["sim_track"] =[sim_track, sim_track, sim_track]
     dataDict["sim_start"] = [sim_start, sim_start, sim_start]
     dataDict["sim_end"] = [sim_end, sim_end, sim_end]
-    dataDict.pop("sim_id")
 
     #Data is split in two parts since the sizes of arrays need to be the same in one dataframe
     data2 = {}
 
+    #Velocities come as x1,y1,x2,y2,x3,y3 from parquet file so here we change it to match the vx1, vx2, vx3, vy1, vy2, vy3 order of the excel document
     data2["vx1"] = velocities[0]
-    data2["vx2"] = velocities[1]
-    data2["vx3"] = velocities[2]
-    data2["vy1"] = velocities[3]
-    data2["vy2"] = velocities[4]
+    data2["vx2"] = velocities[2]
+    data2["vx3"] = velocities[4]
+    data2["vy1"] = velocities[1]
+    data2["vy2"] = velocities[3]
     data2["vy3"] = velocities[5]
 
     data2["ax1"] = accelerations[0]
@@ -380,7 +522,7 @@ def dataToExcelData(dataDict, accelerations):
     return dataDict, data2
 
         
-def saveLifespanToExcel(filename, dataDict, var: str = "mass"):
+def saveLifespanToExcel(filename, dataDict, var: str = "mass", coord: str = "all"):
     t = time()
 
     ldata = dataDict["lifespan"]
@@ -403,54 +545,90 @@ def saveLifespanToExcel(filename, dataDict, var: str = "mass"):
 
             cd_total.append(item[0] + item[1] + item[2])
     
+    #Currently start_position and start_velocity will just use the total for each value, i.e. x+y. 
+    if var == "start_position" or var == "start_velocity":
+        if coord == "all":
+            for item in cdata:
+                cd1.append(item[0]+item[1])
+                cd2.append(item[2]+item[3])
+                cd3.append(item[4]+item[5])
+
+                cd_total.append(sum(item))
+        if coord == "x":
+            for item in cdata:
+                cd1.append(item[0])
+                cd2.append(item[2])
+                cd3.append(item[4])
+
+                cd_total.append(item[0]+item[2]+item[4])
+        
+        if coord == "y":
+            for item in cdata:
+                cd1.append(item[1])
+                cd2.append(item[3])
+                cd3.append(item[5])
+
+                cd_total.append(item[1]+item[3]+item[5])
+    
     ldata_formatted = []
     for data in ldata:
         ldata_formatted.append(data[0])
     
     axis1 = "Lifespan (s)"
-    axis2 = f"{var} 1"
-    axis3 = f"{var} 2"
-    axis4 = f"{var} 3"
-    axis5 = f"Total {var}"
+    if var == "start_position" or var == "start_velocity":
+        if coord == "all": ctext = "x+y"
+        else: ctext = coord
+        axis2 = f"{ctext} {var} 1"
+        axis3 = f"{ctext} {var} 2"
+        axis4 = f"{ctext} {var} 3"
+        axis5 = f"Total {ctext} {var}"
+    else:
+        axis2 = f"{var} 1"
+        axis3 = f"{var} 2"
+        axis4 = f"{var} 3"
+        axis5 = f"Total {var}"
 
     #print(sim_id, "\n",ldata_formatted)
     #print(cd1, "\n", cd2, "\n", cd3, "\n", cd_total)s
     df = pd.DataFrame({"sim_id": sim_id, "lifespan": ldata_formatted, f"{axis2}": cd1, f"{axis3}":cd2, f"{axis4}":cd3, f"{axis5}":cd_total})
 
     with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name="Data", index=False)
+        #Sheetname
+        sn=f"{min(sim_id)}-{max(sim_id)}"
+
+        df.to_excel(writer, sheet_name=sn, index=False)
 
         workbook = writer.book
-        worksheet = writer.sheets["Data"]
+        worksheet = writer.sheets[sn]
 
         max_len = len(sim_id)+1
         td = {'type': 'power', 'display_equation': True, 'forward': cd1[5]-cd1[2]}
 
         chart1 = workbook.add_chart({"type": "scatter"})
         chart1.add_series({
-                'categories': f'=Data!$C$2:$C${max_len}',
-                'values':     f'=Data!$B$2:$B${max_len}',
+                'categories': f'={sn}!$C$2:$C${max_len}',
+                'values':     f'={sn}!$B$2:$B${max_len}',
                 'trendline': td,
                 })
         
         chart2 = workbook.add_chart({"type": "scatter"})
         chart2.add_series({
-                'categories': f'=Data!$D$2:$D${max_len}',
-                'values':     f'=Data!$B$2:$B${max_len}',
+                'categories': f'={sn}!$D$2:$D${max_len}',
+                'values':     f'={sn}!$B$2:$B${max_len}',
                 'trendline': td
                 })
         
         chart3 = workbook.add_chart({"type": "scatter"})
         chart3.add_series({
-                'categories': f'=Data!$E$2:$E${max_len}',
-                'values':     f'=Data!$B$2:$B${max_len}',
+                'categories': f'={sn}!$E$2:$E${max_len}',
+                'values':     f'={sn}!$B$2:$B${max_len}',
                 'trendline': td
                 })
 
         chart4 = workbook.add_chart({"type": "scatter"})
         chart4.add_series({
-                'categories': f'=Data!$F$2:$F${max_len}',
-                'values':     f'=Data!$B$2:$B${max_len}',
+                'categories': f'={sn}!$F$2:$F${max_len}',
+                'values':     f'={sn}!$B$2:$B${max_len}',
                 'trendline': td
                 })
         
@@ -495,13 +673,17 @@ def saveToExcel(filename, dataDict, accelerations):
     df2 = pd.DataFrame(data2)
 
     steps = data1["steps"]
+    #Somehow vx2 and vy1 switched places so the data in excel is wrong. Please look for where this error occurs and fix it after you're done with acctol shit
 
     with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
-        df2.to_excel(writer, sheet_name="Data", index=False)
+        #Sheetname
+        sn = f"{data1['sim_id']}"
+
+        df2.to_excel(writer, sheet_name=sn, index=False)
         #df1.to_excel(writer, sheet_name="Metadata", index=False)
 
         workbook = writer.book
-        worksheet = writer.sheets["Data"]
+        worksheet = writer.sheets[sn]
 
         axis1 = "Acceleration (m/s^2)"
         axis2 = "Velocity (m/s)"
@@ -522,33 +704,33 @@ def saveToExcel(filename, dataDict, accelerations):
     
         def get_series(chart1x,chart2x,chart3x,chart1y,chart2y,chart3y,chartv1x,chartv2x,chartv3x,chartv1y,chartv2y,chartv3y,steps):
             chart1x.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$G$2:$G$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$G$2:$G$2501',
                 })
             
             chart2x.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$H$2:$H$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$H$2:$H$2501',
                 })
             
             chart3x.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$I$2:$I$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$I$2:$I$2501',
                 })
             
             chart1y.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$J$2:$J$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$J$2:$J$2501',
                 })
             
             chart2y.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$K$2:$K$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$K$2:$K$2501',
                 })
             
             chart3y.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$L$2:$L$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$L$2:$L$2501',
                 })
 
             chart1x.set_title({'name': 'X acceleration of Body 1 vs Steps'})
@@ -570,33 +752,33 @@ def saveToExcel(filename, dataDict, accelerations):
             chart3y.set_y_axis({'name': axis1})
 
             chartv1x.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$A$2:$A$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$A$2:$A$2501',
                 })
             
             chartv2x.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$B$2:$B$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$B$2:$B$2501',
                 })
             
             chartv3x.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$C$2:$C$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$C$2:$C$2501',
                 })
             
             chartv1y.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$D$2:$D$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$D$2:$D$2501',
                 })
             
             chartv2y.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$E$2:$E$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$E$2:$E$2501',
                 })
             
             chartv3y.add_series({
-                'categories': '=Data!$M$2:$M$2501',
-                'values':     '=Data!$F$2:$F$2501',
+                'categories': f'={sn}!$M$2:$M$2501',
+                'values':     f'={sn}!$F$2:$F$2501',
                 })
             
             chartv1x.set_title({'name': 'X velocity of Body 1 vs Steps'})
@@ -646,4 +828,13 @@ def saveToExcel(filename, dataDict, accelerations):
 if __name__ == "__main__":
     dm = DataManager(reset=False)
 
-    dm.saveSim()
+    #dm.saveSim()
+
+    olddata = dm.get_analyze_data(sim_id = "all", metadata="all", orderMode = True)
+
+    #Trajectorydata is always treated as an array, so to find sim_id 100 you just get index 99 of the array.
+    oldtrajectorydata = olddata[0]
+    #Metadata is always treated as a dictionary of columns, so to find the mass of sim_id 100 you use the key "mass" and then the index 99.
+    oldmetadata = olddata[1]
+
+    print(len(oldtrajectorydata.keys()))

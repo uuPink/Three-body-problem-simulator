@@ -11,8 +11,21 @@ A lifespan calculator is included, which looks for maxima in acceleration data t
 
 Acceleration- and velocitydata as well as lifespan data can be saved to excel-files automatically.
 
+Matplotlib is used toi visualize trajectories.
+
 
 ---------------------------------------
 This program was made as a part of a larger school-project, and therefore I'm now too lazy to fix the things which only works in very specific scenarios and remove/improve comments. Some unused code is also still in the files but isn't activated. Some comments are also in swedish (sorry).
 
 Maybe will come back to this project later to improve it and give it a UI for easy-use but for now I don't have the time to work on this anymore.
+
+---------------------------------------
+
+**Python-modules and versions used:**
+Python 3.11
+SciPy 1.16.1
+Numpy 1.26.4
+H5py 3.15.1
+Pandas 2.3.3
+Matplotlib 3.10.3
+Pandas xlsxwriter 3.2.9

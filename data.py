@@ -10,7 +10,7 @@ from time import time
 #   Parquet läses m.h.a. pandas medan hdf5 har en egen modul h5.
 
 class DataManager:
-    def __init__(self, hdf5file = "C:/Users/willi/Documents/h5/sim_data.h5", parquetfile="C:/Users/willi/Documents/h5/sim_metadata.parquet", reset = False, storage_limit = 10, backup_freq = 1000, last_sim_override = -10):
+    def __init__(self, hdf5file = "sim_data.h5", parquetfile="sim_metadata.parquet", reset = False, storage_limit = 10, backup_freq = 1000, last_sim_override = -10):
         """
         Only use last_sim_override if you want to set the last sim ID to something specific. Remember that datamgr always saves a sim as last_sim_id+1.
         """

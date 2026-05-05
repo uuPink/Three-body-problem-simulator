@@ -1144,7 +1144,7 @@ class Simulator:
 
                 #Save trajectory
                 #Remember to have a screenshots folder already made or else it will fail.
-                filename = f'C:/Users/willi/Documents/h5/screenshots/{sim["sim_track"]}_{sim["sim_id"]}_{round(sim["lifespan"][0])}_{time()}.png'
+                filename = f'screenshots/{sim["sim_track"]}_{sim["sim_id"]}_{round(sim["lifespan"][0])}_{time()}.png'
                 extent = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
                 try:
                     fig.savefig(filename, bbox_inches=extent.expanded(1.24, 1.175))
@@ -1281,8 +1281,6 @@ if __name__ == "__main__":
     #datamgr = DataManager(reset=False)
     #print(datamgr.get_analyze_data(metadata=["mass"], sim_id=[1,2,3]))
 
-    #Temporarily moved h5 and parquet file away from desktop on home pc to avoid onedrive. Change in data.py.
-    #Screenshots folder also moved to there.
     sim = Simulator(start_bsys=0, reset=False)
     #sim.datamgr.backupSim()
 
